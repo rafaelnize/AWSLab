@@ -1,0 +1,289 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Webserver - Frontend layer
+Metadata:
+  LICENSE: Apache License Version 2.0
+  AUTHOR: Rafael Nize
+Parameters:
+  Env:
+    Default: 'live'
+    Description: Environment
+    Type: String
+  WebServerInstanceType:
+    AllowedValues:
+    - t3.micro
+    - t3.small
+    - t2.medium
+    ConstraintDescription: Choose an instance type.
+    Default: 't3.micro'
+    Description: Web Server node instance type
+    Type: String
+  KeyName:
+    Description: SSH Key for the server
+    NoEcho: 'False'
+    Type: String
+    Default: 'zaxapp_nize'
+  HostAlias:
+    Default: 'webserver'
+    Description: Hostname webserver
+    Type: String
+  DomainName:
+    Default: 'internalzone.local'
+    Description: DNS Domain for this internal zone
+    Type: String
+Mappings:
+  AWSAMIRegionMap:
+    us-east-2:
+      CENTOS7: ami-0f2b4fc905b0bd1f1
+Resources:
+  MainLogGroup:
+    Type: AWS::Logs::LogGroup
+  NewIamInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        !Join ['-', [!Ref 'Env', "NewIamInstanceProfile2"]]
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSCodeCommitReadOnly
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${MainLogGroup}:*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: '*'
+        PolicyName: Instance-Limited-Role
+  NewIamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref NewIamInstanceRole
+  ResEC2:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Comment: Install a front-end webserver
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: S3
+          roleName: !Ref NewIamInstanceRole
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              nfs-utils: []
+              ruby: []
+
+          files:
+            /etc/awslogs/awslogs.conf:
+              content: !Sub |
+                [general]
+                state_file= /var/log/agent-state
+                [/home/centos/misc/install]
+                file = /var/log/cloud-init-output.log
+                log_group_name = ${MainLogGroup}
+                log_stream_name = {instance_id}/webserver/install.log
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/awslogs/awscli.conf:
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region}
+                runas=root
+            /etc/ansible/ansible.conf:
+              content: |
+                [defaults]
+                log_path=/var/log/ansible.log
+              mode: '000440'
+              owner: root
+              group: root
+            
+    Properties:
+      KeyName:
+        Ref: KeyName
+      IamInstanceProfile: !Ref NewIamInstanceProfile
+      ImageId:
+        !FindInMap
+        - AWSAMIRegionMap
+        - !Ref AWS::Region
+        - CENTOS7
+      InstanceType: !Ref WebServerInstanceType
+      SubnetId:
+        Fn::ImportValue: !Sub ${Env}-ResFrontEndSubnetZoneA
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${Env}-WebServerSecurityGroup
+      UserData:
+        !Base64
+          Fn::Sub: |
+             #!/bin/bash
+             setenforce 0
+             yum update -y
+             yum install wget -y
+             yum install yum-utils git -y
+             yum groupinstall development -y
+             wget http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+             rpm -ivh epel-release-latest-7.noarch.rpm
+             yum update -y
+             yum install python2-pip nginx -y
+             systemctl enable nginx.service
+             systemctl start  nginx.service
+             systemctl status nginx.service
+             pip install --upgrade pip
+             pip install awscli ansible
+             pip install pystache python-daemon
+             yum install -y libcurl
+             git config --global credential.helper '!aws codecommit credential-helper $@'
+             git config --global credential.UseHttpPath true
+             mkdir -p /var/www/html/pub
+             /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+             /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource EC2  --region ${AWS::Region}
+             wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py
+             python ./awslogs-agent-setup.py --region ${AWS::Region} --non-interactive --configfile=/etc/awslogs/awslogs.conf
+             wget https://aws-codedeploy-us-east-2.s3.amazonaws.com/latest/install
+             chmod +x ./install
+             ./install auto
+             systemctl enable codedeploy-agent
+             systemctl start codedeploy-agent
+             systemctl status codedeploy-agent
+      Tags:
+      - Key: Name
+        Value:
+          !Join ['', [ 'web-srv-' , !Ref 'AWS::StackName' ]]
+      - Key: StackName
+        Value:
+          !Ref AWS::StackName
+      - Key: Environment
+        Value:
+          !Ref Env
+      - Key: Created by
+        Value: Cloudformation
+  
+  ResEC2DNSAliasRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Join ['', [!Ref 'DomainName', .]]
+      Comment: DNS alias for the instance
+      Name: !Join ['', [!Ref 'Env', ., !Ref 'HostAlias', ., !Ref 'DomainName', .]]
+      Type: 'CNAME'
+      TTL: '300'
+      ResourceRecords:
+        - !GetAtt ResEC2.PrivateDnsName
+  ResEC2ARecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Join ['', [!Ref 'DomainName', .]]
+      Comment: DNS A Record for the instance
+      Name: !Join ['', [!Ref 'HostAlias', ., !Ref 'DomainName', .]]
+      Type: 'A'
+      TTL: '300'
+      ResourceRecords: 
+        - !GetAtt ResEC2.PrivateIp 
+  ResApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+      - Fn::ImportValue: !Sub ${Env}-ResPublicSubnetZoneA
+      - Fn::ImportValue: !Sub ${Env}-ResPublicSubnetZoneB
+      SecurityGroups:
+      - Fn::ImportValue: !Sub ${Env}-ELBSecurityGroup
+      Tags:
+      - Key: Name
+        Value: !Ref Env
+  ResALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /
+      HealthCheckPort: '80'
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId:
+        Fn::ImportValue: !Sub ${Env}-ResMainVPC
+      TargetGroupAttributes:
+      - Key: stickiness.enabled
+        Value: 'false'
+      - Key: stickiness.type
+        Value: lb_cookie
+      - Key: stickiness.lb_cookie.duration_seconds
+        Value: '30'
+      Targets:
+      - Id:
+          Ref: ResEC2
+        Port: 80
+  ResALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref ResALBTargetGroup
+      LoadBalancerArn: !Ref ResApplicationLoadBalancer
+      Port: 80
+      Protocol: HTTP
+  ResALBRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Join ['', [!Ref 'DomainName', .]]
+      Comment: DNS A Record for the instance
+      Name: !Join ['', ['alb-', ., !Ref 'DomainName', .]]
+      Type: 'CNAME'
+      TTL: '300'
+      ResourceRecords: 
+        - !GetAtt ResApplicationLoadBalancer.DNSName
+Outputs:        
+  ELBURL:
+    Description: The URL of the ELB, the DNS Cname record is down bellow
+      if you specified a DNS name
+    Value: !GetAtt ResApplicationLoadBalancer.DNSName
+  OutALBTargetGroup:
+    Value: !Ref ResALBTargetGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, ALBTargetGroup ]]
+  OutWebServerDNSAliasRecord:
+    Description: DNS Alias record for the instance (internal zone)
+    Value: !Ref ResEC2DNSAliasRecord
+  OutWebServerDNS:
+    Description: DNS A entry for webserver host (internal zone)
+    Value: !Ref ResEC2ARecord
+

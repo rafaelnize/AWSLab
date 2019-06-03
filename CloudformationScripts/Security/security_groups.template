@@ -1,0 +1,185 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Security Groups template
+Parameters:
+  Env:
+    Default: 'live'
+    Description: Environment - live or staging
+    Type: String
+  AccessCIDR:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/x notation
+    Description: 'The CIDR IP range that is permitted to access. Note: a value of
+      0.0.0.0/0 will allow access from ANY ip address'
+    Type: String
+    Default: '0.0.0.0/0'
+Resources:
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Join ["-", [ !Ref Env, BastionSecurityGroup ]] 
+      GroupDescription: Allow access to SSH
+      VpcId: 
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 
+          !Ref AccessCIDR
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        CidrIp: 0.0.0.0/0
+  DatabaseSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Join ["-", [ !Ref Env, DatabaseSecurityGroup ]] 
+      GroupDescription: Allow access to MySQL
+      VpcId: 
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: 
+          !GetAtt AppSecurityGroup.GroupId
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Join ["-", [ !Ref Env, AppSecurityGroup ]] 
+      GroupDescription: Allow access to and from App layer
+      VpcId: 
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: 
+          !GetAtt WebServerSecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: 
+          !GetAtt WebServerSecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        SourceSecurityGroupId: 
+          !GetAtt WebServerSecurityGroup.GroupId
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Join ["-", [ !Ref Env, WebServerSecurityGroup ]] 
+      GroupDescription: App Server Security Group
+      VpcId: 
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        SourceSecurityGroupId: 
+          !GetAtt BastionSecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        SourceSecurityGroupId: 
+          !GetAtt ELBSecurityGroup.GroupId
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        SourceSecurityGroupId: 
+          !GetAtt ELBSecurityGroup.GroupId
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+  ELBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName:
+        !Join ["-", [ !Ref Env, ELBSecurityGroup ]] 
+      GroupDescription: ELB Security Group
+      VpcId: 
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+Outputs:
+  DatabaseSecurityGroup:
+    Value: 
+      !Ref DatabaseSecurityGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, DatabaseSecurityGroup ]]
+  AppSecurityGroup:
+    Value: 
+      !Ref AppSecurityGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, AppSecurityGroup ]]
+  WebServerSecurityGroup: 
+    Value: 
+      !Ref WebServerSecurityGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, WebServerSecurityGroup ]]
+  ELBSecurityGroup:
+    Value: 
+      !Ref ELBSecurityGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, ELBSecurityGroup ]]
+  BastionSecurityGroup:
+    Value: 
+      !Ref BastionSecurityGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, BastionSecurityGroup ]]
+ 

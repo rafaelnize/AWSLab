@@ -1,0 +1,338 @@
+---
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: App Stack
+Parameters:
+  Env:
+    Default: 'staging'
+    Description: Environment ie staging, live
+    Type: String
+  AdminEmail:
+    Description: Email of the Magento site administrator
+    Type: String
+    Default: 'rafael.spitzmann@gmail.com'
+  DBMasterUserPassword:
+    Description: RDS MySQL Database Password
+    NoEcho: 'True'
+    Type: String
+    Default: ''
+  DBMasterUsername:
+    Default: admin
+    Description: RDS MySQL Database Username
+    Type: String
+  DBName:
+    Default: ''
+    Description: RDS MySQL Database Name
+    Type: String
+  DNSName:
+    Default: ''
+    Description: DNS Name for the magento site, you should create an alias for the ie. www.zaxapp.com.br
+      ELB after the stack creation
+    Type: String
+  WebServerDesiredCapacity:
+    Default: '1'
+    Description: Desired No of web server instances
+    Type: Number
+  WebServerInstanceType:
+    AllowedValues:
+    - t3.micro
+    - t3.small
+    - t2.medium
+    - t2.large
+    ConstraintDescription: Choose an instance type.
+    Default: t3.small
+    Description: Web Server node instance type
+    Type: String
+  WebServerMaxSize:
+    Default: '1'
+    Description: Maximum No of web server instances
+    Type: Number
+  WebServerMinSize:
+    Default: '1'
+    Description: Minimum No of web server instances
+    Type: Number
+Mappings:
+  AWSAMIRegionMap:
+    us-east-2:
+      CENTOS7: ami-0f2b4fc905b0bd1f1
+Resources:
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+  NewIamInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: 
+        !Join ['-', [!Ref 'Env', "NewIamInstanceProfile"]]
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AWSCodeCommitReadOnly
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - ec2.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: /
+      Policies:
+      - PolicyDocument:
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            - logs:DescribeLogStreams
+            Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:${AppLogGroup}:*
+          - Effect: Allow
+            Action:
+            - s3:GetObject
+            Resource: '*'
+        PolicyName: Instance-Limited-Role
+  NewIamInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+      - !Ref NewIamInstanceRole
+  MagentoAMI:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Comment: Install a Magento web server
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: S3
+          roleName: !Ref NewIamInstanceRole
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              nfs-utils: []
+              ruby: []
+          files:
+            /etc/awslogs/awslogs.conf:
+              content: !Sub |
+                [general]
+                state_file= /var/log/agent-state
+                [/home/centos/misc/install]
+                file = /var/log/cloud-init-output.log
+                log_group_name = ${AppLogGroup}
+                log_stream_name = {instance_id}/magento/install.log
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/awslogs/awscli.conf:
+              content: !Sub |
+                [plugins]
+                cwlogs = cwlogs
+                [default]
+                region = ${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/cfn-hup.conf:
+              content: !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+              mode: '000400'
+              owner: root
+              group: root
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.LaunchConfig.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource LaunchConfig --region ${AWS::Region}
+                runas=root
+            /etc/ansible/ansible.conf:
+              content: !Sub |
+                [defaults]
+                log_path=/var/log/ansible.log
+              mode: '000440'
+              owner: root
+              group: root
+    Properties:
+      KeyName:
+        Fn::ImportValue: !Sub ${Env}-KeyPairName
+      IamInstanceProfile: !Ref NewIamInstanceProfile
+      ImageId:
+        !FindInMap
+        - AWSAMIRegionMap
+        - !Ref AWS::Region
+        - CENTOS7
+      InstanceType: !Ref WebServerInstanceType
+      SubnetId:
+        Fn::ImportValue: !Sub ${Env}-PrivateSubnet1ID
+
+      SecurityGroupIds:
+        - Fn::ImportValue: !Sub ${Env}-WebServerSecurityGroup
+      UserData:
+        !Base64
+          Fn::Sub: |
+             #!/bin/bash
+             setenforce 0
+             yum update -y
+             yum install wget -y
+             yum install yum-utils git -y
+             yum groupinstall development -y
+             wget http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+             rpm -ivh epel-release-latest-7.noarch.rpm
+             yum update -y
+             yum install python2-pip nginx -y
+             systemctl enable nginx.service
+             systemctl start  nginx.service
+             systemctl status nginx.service
+             pip install --upgrade pip
+             pip install awscli ansible
+             pip install pystache python-daemon
+             yum install -y libcurl
+             git config --global credential.helper '!aws codecommit credential-helper $@'
+             git config --global credential.UseHttpPath true
+             mkdir -p /var/www/html/pub
+             /usr/bin/easy_install --script-dir /opt/aws/bin https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz
+             /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource MagentoAMI  --region ${AWS::Region}
+             wget https://s3.amazonaws.com/aws-cloudwatch/downloads/latest/awslogs-agent-setup.py
+             python ./awslogs-agent-setup.py --region ${AWS::Region} --non-interactive --configfile=/etc/awslogs/awslogs.conf
+             wget https://aws-codedeploy-us-east-2.s3.amazonaws.com/latest/install
+             chmod +x ./install
+             ./install auto
+             systemctl enable codedeploy-agent
+             systemctl start codedeploy-agent
+             systemctl status codedeploy-agent
+      Tags:
+      - Key: Application
+        Value: Magento
+      - Key: Name
+        Value:
+          !Join ['', [ 'magsrv-golden-img-' , !Ref 'AWS::StackName' ]]
+      - Key: StackName
+        Value:
+          !Ref AWS::StackName
+      - Key: Environment
+        Value:
+          !Ref Env
+      - Key: Application
+        Value: Magento
+      - Key: Created by
+        Value: Cloudformation
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription:
+      - Endpoint:
+          Fn::ImportValue: !Sub ${Env}-NotificationEmail
+        Protocol: email
+  ApplicationLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Type: application
+      Scheme: internet-facing
+      Subnets:
+      - Fn::ImportValue: !Sub ${Env}-PublicSubnet1ID
+      - Fn::ImportValue: !Sub ${Env}-PublicSubnet2ID
+      SecurityGroups:
+      - Fn::ImportValue: !Sub ${Env}-ELBSecurityGroup
+      Tags:
+      - Key: Name
+        Value: !Ref Env
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 30
+      HealthCheckPath: /health_check.php
+      HealthCheckPort: 80
+      HealthCheckProtocol: HTTP
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      Port: 80
+      Protocol: HTTP
+      UnhealthyThresholdCount: 5
+      VpcId:
+        Fn::ImportValue: !Sub ${Env}-VPCID
+      TargetGroupAttributes:
+      - Key: stickiness.enabled
+        Value: 'false'
+      - Key: stickiness.type
+        Value: lb_cookie
+      - Key: stickiness.lb_cookie.duration_seconds
+        Value: '30'
+      Targets:
+      - Id:
+          Ref: MagentoAMI
+        Port: 80
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - !If
+        - UseSSL
+        - CertificateArn: !Ref SSLCertificateId
+        - !Ref AWS::NoValue
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref ALBTargetGroup
+      LoadBalancerArn: !Ref ApplicationLoadBalancer
+      Port:
+        !If
+        - UseSSL
+        - 443
+        - 80
+      Protocol:
+        !If
+        - UseSSL
+        - HTTPS
+        - HTTP
+Outputs:
+  URL:
+      Description: The URL of the website
+      Value:
+        !Sub
+        - ${Param1}://${Param2}
+        - Param2:
+            !If
+            - UseELBName
+            - !GetAtt ApplicationLoadBalancer.DNSName
+            - !Ref DNSName
+          Param1:
+            !If
+            - UseSSL
+            - https
+            - http
+
+  ELBURL:
+    Description: The URL of the ELB, the DNS Cname record is down bellow
+      if you specified a DNS name
+    Value: !GetAtt ApplicationLoadBalancer.DNSName
+
+  DNSApplicationLBCname:
+    Description: This is the URL of the ELB CName record
+    Value: !Ref DNSApplicationLB
+
+  InstanceAMI:
+    Description: This is the URL of the ELB CName record
+    Value: !Ref MagentoAMI
+  InstanceId:
+    Value: !Ref MagentoAMI
+    Export:
+      Name: !Join ["-", [ !Ref Env, MagentoAMI ]]
+  ALBTargetGroup:
+    Value: !Ref ALBTargetGroup
+    Export:
+      Name: !Join ["-", [ !Ref Env, ALBTargetGroup ]]
+  NewIamInstanceProfile:
+    Value: !Ref NewIamInstanceProfile
+    Export:
+      Name: !Join ["-", [ !Ref Env, NewIamInstanceProfile ]]
+  NewIamInstanceRole:
+    Value: !Ref NewIamInstanceRole
+    Export:
+      Name: !Join ["-", [ !Ref Env, NewIamInstanceRole ]]
+  NotificationTopic:
+    Value: !Ref NotificationTopic
+    Export:
+      Name: !Join ["-", [ !Ref Env, NotificationTopic ]]
+  WebServerInstanceType:
+    Value: !Ref WebServerInstanceType
+    Export:
+        Name: !Join ["-", [ !Ref Env, WebServerInstanceType ]]

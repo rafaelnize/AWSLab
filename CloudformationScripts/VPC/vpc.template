@@ -1,0 +1,783 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploy a lab VPC
+Metadata:
+  LICENSE: Apache License Version 2.0
+  AUTHOR: Rafael Nize
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      -
+       Label:
+         default: Environment Configuration
+       Parameters:
+        - Env
+        - DomainName
+      -
+       Label:
+           default: Network Configuration
+       Parameters:
+       #- AvailabilityZones
+       - MainVPCCIDR
+       - FrontEndSubnetZoneA
+       - FrontEndSubnetZoneB
+       - AppSubnetZoneA
+       - AppSubnetZoneB
+       - DatabaseSubnetZoneA
+       - DatabaseSubnetZoneB
+       - MainVPCNameTag
+      -
+       Label: 
+          default: Support VPC
+       Parameters:
+         - VPCSupportCIDR
+         - VPCBPublicSubnetZoneA
+         - VPCBPublicSubnetZoneB
+         - VPCSupportNameTag
+    ParameterLabels:   
+      Env:
+        default: "Environment ie staging live"  
+      MainVPCNameTag:
+        default: "vpc_main"
+      MainVPCCIDR:
+        default: "Main VPC CIDR"
+      FrontEndSubnetZoneA:
+        default: "Front end subnet Zone A"
+      FrontEndSubnetZoneB:
+        default: "Front end subnet Zone B"
+      AppSubnetZoneA:
+        default: "App subnet Zone A"
+      AppSubnetZoneB:
+        default: "App subnet Zone B" 
+      DatabaseSubnetZoneA:
+        default: "Database subnet Zone A"
+      DatabaseSubnetZoneB:
+        default: "Database subnet Zone B"
+      PublicSubnetZoneA:
+        default: "Public subnet Zone A"
+      PublicSubnetZoneB:
+        default: "Public subnet Zone B"
+      VPCSupportNameTag:
+        default: "Support VPC"
+      VPCBPublicSubnetZoneA:
+        default: "Support VPC - Public subnet Zone A"
+      VPCBPublicSubnetZoneB:
+        default: "Support VPC - Public subnet Zone B"
+      DomainName:
+        default: "Domain name for the internal DNS zone"
+      
+Conditions:
+  NVirginiaRegionCondition:
+    Fn::Equals: [ Ref: "AWS::Region", "us-east-1" ]
+Parameters:
+  Env:
+    Default: live
+    Description: Environment ie staging, live
+    Type: String
+  MainVPCNameTag:
+    AllowedPattern: ^[0-9a-zA-Z]*$
+    ConstraintDescription: Please, include  include numbers, 
+       lowercase letters, uppercase letters, hyphens (-) 
+    Default: vpcmain
+    Description: Tag Name being used for the VPC 
+    Type: String
+  MainVPCZone:
+    Description: Select VPC Zones
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Default: us-east-2a, us-east-2b 
+  MainVPCCIDR:
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(1[6-9]|2[0-8]))$"
+    ConstraintDescription: "CIDR block parameter must be in the form x.x.x.x/16-28"
+    Default: "10.1.0.0/16"
+    Description: "CIDR block for the VPC"
+    Type: String
+  FrontEndSubnetZoneA:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.10.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone A
+    Type: String
+  FrontEndSubnetZoneB:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.20.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone B
+    Type: String
+  AppSubnetZoneA:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.30.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone A
+    Type: String
+  AppSubnetZoneB:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.40.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone B
+    Type: String
+  DatabaseSubnetZoneA:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.50.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone A
+    Type: String
+  DatabaseSubnetZoneB:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.60.0/24
+    Description: CIDR block for private subnet 2 located in Availability Zone A
+    Type: String
+  PublicSubnetZoneA:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.100.0/24
+    Description: CIDR block for public subnet 2 located in Availability Zone A
+    Type: String
+  PublicSubnetZoneB:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.1.110.0/24
+    Description: CIDR block for public subnet 2 located in Availability Zone B
+    Type: String
+  SupportVPCZone:
+    Description: Select VPC Zones
+    Type: List<AWS::EC2::AvailabilityZone::Name>
+    Default: us-east-2a, us-east-2b 
+  VPCSupportCIDR:
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(1[6-9]|2[0-8]))$"
+    ConstraintDescription: "CIDR block parameter must be in the form x.x.x.x/16-28"
+    Default: "10.2.0.0/16"
+    Description: "CIDR block for the Support VPC"
+    Type: String
+  VPCBPublicSubnetZoneA:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.2.200.0/24
+    Description: CIDR block for public subnet 2 located in Availability Zone A
+    Type: String
+  VPCBPublicSubnetZoneB:
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    ConstraintDescription: Must be a valid IP range in x.x.x.x/24 notation
+    Default: 10.2.220.0/24
+    Description: CIDR block for public subnet 2 located in Availability Zone B
+    Type: String
+  VPCSupportNameTag:
+    AllowedPattern: ^[0-9a-zA-Z]*$
+    ConstraintDescription: Please, include  include numbers, 
+       lowercase letters, uppercase letters 
+    Default: vpcsupport
+    Description: Tag Name being used for this VPC 
+    Type: String
+  DomainName:
+    Default: 'internalzone.local'
+    Description: DNS Domain for this internal zone
+    Type: String
+Resources:
+  ResMainVPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: 
+        Ref: MainVPCCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: "default"
+      Tags: 
+        - Key: Name
+          Value: 
+            Ref: MainVPCNameTag
+        - Key: Environment
+          Value:
+            Ref: Env
+  ResDHCPOptions:
+    Type: "AWS::EC2::DHCPOptions"
+    Properties:
+      DomainName:
+          Fn::If: [ NVirginiaRegionCondition,
+                    "ec2.internal",
+                    "Fn::Sub" : "${AWS::Region}.compute.internal"
+                  ]
+      DomainNameServers: ["AmazonProvidedDNS"]
+  ResDHCPAssoc:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties: 
+      DhcpOptionsId: 
+        Ref: ResDHCPOptions
+      VpcId: 
+        Ref: ResMainVPC
+  ResPublicSubnetZoneA:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: PublicSubnetZoneA
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: PublicSubnetZoneA
+      VpcId:
+        Ref: ResMainVPC  
+  ResPublicSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone:
+        Fn::Select: 
+          - 1
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: PublicSubnetZoneB
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: PublicSubnetZoneB
+      VpcId:
+        Ref: ResMainVPC
+  ResFrontEndSubnetZoneA:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: FrontEndSubnetZoneA
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: FrontEndSubnetZoneA
+      VpcId:
+        Ref: ResMainVPC
+  ResFrontEndSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 1
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: FrontEndSubnetZoneB
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: FrontEndSubnetZoneB
+      VpcId:
+        Ref: ResMainVPC
+  ResAppSubnetZoneA:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: AppSubnetZoneA
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: AppSubnetZoneA
+      VpcId:
+        Ref: ResMainVPC
+  ResAppSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 1
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: AppSubnetZoneB
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: AppSubnetZoneB
+      VpcId:
+        Ref: ResMainVPC
+  ResDatabaseSubnetZoneA:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: DatabaseSubnetZoneA
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: DatabaseSubnetZoneA
+      VpcId:
+        Ref: ResMainVPC
+  ResDatabaseSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 1
+          - Ref: MainVPCZone
+      CidrBlock: 
+        Ref: DatabaseSubnetZoneB
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: DatabaseSubnetZoneB
+      VpcId:
+        Ref: ResMainVPC
+  ResPublicSubnetZoneARTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResPublicSubnetZoneARTable
+  ResPublicSubnetZoneBRTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResPublicSubnetZoneBRTable
+  ResFrontEndSubnetZoneARTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResFrontEndSubnetZoneARTable
+  ResFrontEndSubnetZoneBRTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResFrontEndSubnetZoneBRTable
+  ResAppSubnetZoneARTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResAppSubnetZoneARTable
+  ResAppSubnetZoneBRTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResAppSubnetZoneBRTable
+  ResDatabaseSubnetZoneARTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResDatabaseSubnetZoneARTable
+  ResDatabaseSubnetZoneBRTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResMainVPC
+      Tags:
+      - Key: Name
+        Value: ResDatabaseSubnetZoneBRTable
+  ResPublicSubnetZoneARTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResPublicSubnetZoneARTable
+      SubnetId:
+        Ref: ResPublicSubnetZoneA
+  ResPublicSubnetZoneBRTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResPublicSubnetZoneBRTable
+      SubnetId:
+        Ref: ResPublicSubnetZoneB
+  ResAppSubnetZoneARTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResAppSubnetZoneARTable
+      SubnetId:
+        Ref: ResAppSubnetZoneA
+  ResAppSubnetZoneBRTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResAppSubnetZoneBRTable
+      SubnetId:
+        Ref: ResAppSubnetZoneB
+  ResDatabaseSubnetZoneARTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResDatabaseSubnetZoneARTable
+      SubnetId:
+        Ref: ResDatabaseSubnetZoneA
+  ResDatabaseSubnetZoneBRTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResDatabaseSubnetZoneBRTable
+      SubnetId:
+        Ref: ResDatabaseSubnetZoneB
+  ResFrontEndSubnetZoneARTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResFrontEndSubnetZoneARTable
+      SubnetId:
+        Ref: ResFrontEndSubnetZoneA
+  ResFrontEndSubnetZoneARTBssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResFrontEndSubnetZoneBRTable
+      SubnetId:
+        Ref: ResFrontEndSubnetZoneB
+  ResInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: InternetGateway
+  ResVPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId: 
+        Ref: ResInternetGateway
+      VpcId: 
+        Ref: ResMainVPC
+  ResEIPNatgatewayZoneA:
+   DependsOn: ResVPCGatewayAttachment
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+  ResEIPNatgatewayZoneB:
+    DependsOn: ResVPCGatewayAttachment
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  ResNatGatewayPublicSubnetZoneA:
+    Type: AWS::EC2::NatGateway
+    DependsOn: ResVPCGatewayAttachment
+    Properties: 
+      AllocationId:
+        Fn::GetAtt:
+        - ResEIPNatgatewayZoneA
+        - AllocationId
+      SubnetId: 
+        Ref: ResPublicSubnetZoneA
+      Tags: 
+        - Key: Name
+          Value: ResNatGatewayPublicSubnetZoneA
+  ResNatGatewayPublicSubnetZoneB:
+    Type: AWS::EC2::NatGateway
+    DependsOn: ResVPCGatewayAttachment
+    Properties: 
+      AllocationId:
+        Fn::GetAtt:
+        - ResEIPNatgatewayZoneB
+        - AllocationId
+      SubnetId: 
+        Ref: ResPublicSubnetZoneB
+      Tags: 
+        - Key: Name
+          Value: ResNatGatewayPublicSubnetZoneB
+  ResPublicSubnetZoneARoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: ResInternetGateway
+      RouteTableId: 
+        Ref: ResPublicSubnetZoneARTable
+  ResPublicSubnetZoneBRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: ResInternetGateway
+      RouteTableId: 
+        Ref: ResPublicSubnetZoneBRTable
+  ResFrontEndSubnetZoneARoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneA
+      RouteTableId: 
+        Ref: ResFrontEndSubnetZoneARTable
+  ResFrontEndSubnetZoneBRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneB
+      RouteTableId: 
+        Ref: ResFrontEndSubnetZoneBRTable
+  ResAppSubnetZoneARoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneA
+      RouteTableId: 
+        Ref: ResAppSubnetZoneARTable  
+  ResAppSubnetZoneBRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneB
+      RouteTableId: 
+        Ref: ResAppSubnetZoneBRTable  
+  ResDatabaseSubnetZoneARoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneA
+      RouteTableId: 
+        Ref: ResDatabaseSubnetZoneARTable
+  ResDatabaseSubnetZoneBRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId:
+        Ref: ResNatGatewayPublicSubnetZoneB
+      RouteTableId: 
+        Ref: ResDatabaseSubnetZoneBRTable
+  ResSupportVPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: 
+        Ref: VPCSupportCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      InstanceTenancy: "default"
+      Tags: 
+        - Key: Name
+          Value: 
+            Ref: VPCSupportNameTag
+        - Key: Environment
+          Value:
+            Ref: Env
+  ResSupportVPCDHCPOptions:
+    Type: "AWS::EC2::DHCPOptions"
+    Properties:
+      DomainName:
+          Fn::If: [ NVirginiaRegionCondition,
+                    "ec2.internal",
+                    "Fn::Sub" : "${AWS::Region}.compute.internal"
+                  ]
+      DomainNameServers: ["AmazonProvidedDNS"]
+  ResSupportVPCDHCPAssoc:
+    Type: AWS::EC2::VPCDHCPOptionsAssociation
+    Properties: 
+      DhcpOptionsId: 
+        Ref: ResSupportVPCDHCPOptions
+      VpcId: 
+        Ref: ResSupportVPC
+  ResSupportVPCPublicSubnetZoneA:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone: 
+        Fn::Select: 
+          - 0
+          - Ref: SupportVPCZone
+      CidrBlock: 
+        Ref: VPCBPublicSubnetZoneA
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: VPCBPublicSubnetZoneA
+      VpcId:
+        Ref: ResSupportVPC
+  ResSupportVPCPublicSubnetZoneB:
+    Type: AWS::EC2::Subnet
+    Properties: 
+      AvailabilityZone:
+        Fn::Select: 
+          - 1
+          - Ref: SupportVPCZone
+      CidrBlock: 
+        Ref: VPCBPublicSubnetZoneB
+      MapPublicIpOnLaunch: False
+      Tags: 
+        - Key: Name
+          Value: VPCBPublicSubnetZoneB
+      VpcId:
+        Ref: ResSupportVPC
+  ResVPCBPublicSubnetZoneARTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResSupportVPC
+      Tags:
+      - Key: Name
+        Value: ResVPCBPublicSubnetZoneARTable
+  ResVPCBPublicSubnetZoneBRTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:  
+        Ref: ResSupportVPC
+      Tags:
+      - Key: Name
+        Value: ResVPCBPublicSubnetZoneBRTable
+  ResVPCBInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: ResVPCBInternetGateway
+  ResVPCBGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId: 
+        Ref: ResVPCBInternetGateway
+      VpcId: 
+        Ref: ResSupportVPC
+  ResSupportVPCPublicSubnetZoneARTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResVPCBPublicSubnetZoneARTable
+      SubnetId:
+        Ref: ResSupportVPCPublicSubnetZoneA
+  ResSupportVPCPublicSubnetZoneBRTAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties: 
+      RouteTableId: 
+        Ref: ResVPCBPublicSubnetZoneBRTable
+      SubnetId:
+        Ref: ResSupportVPCPublicSubnetZoneB
+  ResVPCBEIPNatgatewayZoneA:
+   DependsOn: ResVPCBGatewayAttachment
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+  ResVPCBEIPNatgatewayZoneB:
+   DependsOn: ResVPCBGatewayAttachment
+   Type: AWS::EC2::EIP
+   Properties:
+      Domain: vpc
+  ResVPCBNatGatewayPublicSubnetZoneA:
+    Type: AWS::EC2::NatGateway
+    Properties: 
+      AllocationId:
+        Fn::GetAtt:
+        - ResVPCBEIPNatgatewayZoneA
+        - AllocationId
+      SubnetId: 
+        Ref: ResSupportVPCPublicSubnetZoneA
+      Tags: 
+        - Key: Name
+          Value: ResVPCBNatGatewayPublicSubnetZoneA
+  ResVPCBNatGatewayPublicSubnetZoneB:
+    Type: AWS::EC2::NatGateway
+    Properties: 
+      AllocationId:
+        Fn::GetAtt:
+        - ResVPCBEIPNatgatewayZoneB
+        - AllocationId
+      SubnetId: 
+        Ref: ResSupportVPCPublicSubnetZoneB
+      Tags: 
+        - Key: Name
+          Value: ResVPCBNatGatewayPublicSubnetZoneB
+  ResVPCBPublicSubnetZoneARoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: ResVPCBInternetGateway
+      RouteTableId: 
+        Ref: ResVPCBPublicSubnetZoneARTable
+  ResVPCBPublicSubnetZoneBRoute:
+    Type: AWS::EC2::Route
+    Properties: 
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId:
+        Ref: ResVPCBInternetGateway
+      RouteTableId: 
+        Ref: ResVPCBPublicSubnetZoneBRTable
+  ResPeerConnection:
+    Type: AWS::EC2::VPCPeeringConnection
+    Properties: 
+      PeerOwnerId:
+        Ref: AWS::AccountId
+      PeerVpcId:
+        Ref: ResSupportVPC
+      Tags: 
+        - Key: Name
+          Value: VPC_Peer
+      VpcId:
+        Ref: ResMainVPC
+  ResDNSPrivateZone: 
+    Type: "AWS::Route53::HostedZone"
+    Properties: 
+      HostedZoneConfig: 
+        Comment: "Private zone for inter vpc communication"
+      Name: 
+        Ref: DomainName
+      VPCs: 
+        - 
+          VPCId:
+            Ref: ResMainVPC
+          VPCRegion: "us-east-2"
+        - 
+          VPCId:
+            Ref: ResSupportVPC
+          VPCRegion: "us-east-2"
+      HostedZoneTags: 
+        - 
+          Key: "Environment"
+          Value: "live"
+        - 
+          Key: "DNS"
+          Value: "internaldomain"
+Outputs:
+  MainVPCID:
+    Value: !Ref ResMainVPC
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResMainVPC]]
+  VPCID:
+    Value: !Ref ResMainVPC
+    Export:
+      Name: !Join ["-",[ !Ref Env, VPCID ]]
+  ResFrontEndSubnetZoneA:
+    Value: !Ref ResFrontEndSubnetZoneA
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResFrontEndSubnetZoneA ]]
+  ResFrontEndSubnetZoneB:
+    Value: !Ref ResFrontEndSubnetZoneB
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResFrontEndSubnetZoneB ]]
+  ResPublicSubnetZoneA:
+    Value: !Ref ResPublicSubnetZoneA
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResPublicSubnetZoneA ]]
+  ResPublicSubnetZoneB:
+    Value: !Ref ResPublicSubnetZoneB
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResPublicSubnetZoneB ]]
+  ResAppSubnetZoneA:
+    Value: !Ref ResAppSubnetZoneA
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResAppSubnetZoneA ]]
+  ResAppSubnetZoneB:
+    Value: !Ref ResAppSubnetZoneB
+    Export:
+      Name: !Join ["-",[ !Ref Env, ResAppSubnetZoneB ]]
+  
+
+  
